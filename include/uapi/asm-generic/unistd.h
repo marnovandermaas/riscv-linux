@@ -734,9 +734,14 @@ __SYSCALL(__NR_pkey_free,     sys_pkey_free)
 __SYSCALL(__NR_statx,     sys_statx)
 #define __NR_create_enclave 292
 __SYSCALL(__NR_create_enclave,     sys_create_enclave)
+#define __NR_create_send_mailbox 293
+__SYSCALL(__NR_create_send_mailbox,		sys_create_send_mailbox)
+#define __NR_get_receive_mailbox 294
+__SYSCALL(__NR_get_receive_mailbox, 	sys_get_receive_mailbox)
+
 
 #undef __NR_syscalls
-#define __NR_syscalls 293
+#define __NR_syscalls 295
 
 /*
  * All syscalls below here should go away really,
