@@ -1,8 +1,8 @@
 #include <linux/linkage.h>
 #include <linux/dma-mapping.h>
-#include "praesidio.h"
+#include "praesidiouser.h"
 #include "instructions.h"
-#include <string.h>
+#include <linux/string.h>
 #include <linux/uaccess.h>
 
 //dma_alloc_coherent doc: https://lists.kernelnewbies.org/pipermail/kernelnewbies/2016-February/015687.html
@@ -17,8 +17,16 @@ asmlinkage unsigned long sys_create_enclave(void __user *enclave_memory)
   * Allocate enclave memory
   */
   dma_addr_t phys_addr;
-  size_t total_number_of_enclave_pages = NUMBER_OF_ENCLAVE_PAGES+NUMBER_OF_COMMUNICATION_PAGES+NUMBER_OF_STACK_PAGES;
-  void *cpu_addr = dma_alloc_coherent(
+  size_t total_number_of_enclave_pages;
+  size_t i;
+  struct Message_t message;
+  struct Message_t response;
+  enclave_id_t currentEnclave, myEnclave;
+  void *cpu_addr;
+  unsigned long copy_status;
+  //printk("syscall create enclave is called.\n");
+  total_number_of_enclave_pages = NUMBER_OF_ENCLAVE_PAGES+NUMBER_OF_COMMUNICATION_PAGES+NUMBER_OF_STACK_PAGES;
+  cpu_addr = dma_alloc_coherent(
       NULL,
       (total_number_of_enclave_pages) << PAGE_SHIFT,
       &phys_addr, GFP_KERNEL
@@ -29,14 +37,16 @@ asmlinkage unsigned long sys_create_enclave(void __user *enclave_memory)
     return -1;
   }
 
-  copy_from_user(cpu_addr, enclave_memory, NUMBER_OF_ENCLAVE_PAGES << PAGE_SHIFT); //Initialize enclave memory
+  copy_status = copy_from_user(cpu_addr, enclave_memory, NUMBER_OF_ENCLAVE_PAGES << PAGE_SHIFT); //Initialize enclave memory
+  if (copy_status != 0) {
+    printk(KERN_ERR "Could not copy enclave memory from user space.\n");
+    return -1;
+  }
 
   /*
   * Create enclave context
   */
-  struct Message_t message;
-  struct Message_t response;
-  enclave_id_t currentEnclave = getCurrentEnclaveID();
+  currentEnclave = getCurrentEnclaveID();
   message.source = currentEnclave;
   message.destination = ENCLAVE_MANAGEMENT_ID;
   message.type = MSG_CREATE_ENCLAVE;
@@ -45,7 +55,7 @@ asmlinkage unsigned long sys_create_enclave(void __user *enclave_memory)
   do {
     receiveMessage(&response);
   } while(response.source != ENCLAVE_MANAGEMENT_ID);
-  enclave_id_t myEnclave = response.content;
+  myEnclave = response.content;
 
   /*
   * Set enclave identifier argument for donate page message
@@ -60,7 +70,7 @@ asmlinkage unsigned long sys_create_enclave(void __user *enclave_memory)
   /*
   * Donate all allocated pages to enclave.
   */
-  for(size_t i = 0; i < total_number_of_enclave_pages; i++) {
+  for(i = 0; i < total_number_of_enclave_pages; i++) {
     message.type = MSG_DONATE_PAGE;
     message.content = ((unsigned long) phys_addr) + (i << PAGE_SHIFT);
     sendMessage(&message);
