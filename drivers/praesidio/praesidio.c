@@ -1,6 +1,8 @@
+#include "praesidiodriver.h"
+#include "praesidiosupervisor.h"
+
 #include <linux/linkage.h>
 #include <linux/dma-mapping.h>
-#include "praesidiodriver.h"
 #include <linux/string.h>
 #include <linux/uaccess.h>
 
@@ -10,7 +12,7 @@
 
 #define PAGE_SHIFT (12)
 
-asmlinkage unsigned long sys_create_enclave(void __user *enclave_memory)
+asmlinkage enclave_id_t sys_create_enclave(void __user *enclave_memory)
 {
   /*
   * Allocate enclave memory
@@ -36,6 +38,7 @@ asmlinkage unsigned long sys_create_enclave(void __user *enclave_memory)
     return -1;
   }
 
+  //For reference: https://www.fsl.cs.sunysb.edu/kernel-api/re257.html
   copy_status = copy_from_user(cpu_addr, enclave_memory, NUMBER_OF_ENCLAVE_PAGES << PAGE_SHIFT); //Initialize enclave memory
   if (copy_status != 0) {
     printk(KERN_ERR "Could not copy enclave memory from user space.\n");
@@ -91,12 +94,26 @@ asmlinkage unsigned long sys_create_enclave(void __user *enclave_memory)
   return myEnclave; //Return enclave identifier to user
 }
 
-asmlinkage void* sys_create_send_mailbox(unsigned long receiver_id)
+asmlinkage void __user *sys_create_send_mailbox(enclave_id_t receiver_id)
 {
-  return NULL; //TODO
+  dma_addr_t phys_addr;
+  void *cpu_addr;
+  cpu_addr = dma_alloc_coherent(
+      NULL,
+      1 << PAGE_SHIFT,
+      &phys_addr, GFP_KERNEL
+  );
+  if(give_read_permission(phys_addr, receiver_id)) {
+    printk(KERN_ERR "Failed to give read permission.\n");
+    return NULL;
+  }
+  //TODO map phys_addr into userspace
+  return NULL; //TODO return userspace pointer
 }
 
-asmlinkage volatile void* sys_get_receive_mailbox(unsigned long sender_id)
+asmlinkage volatile void __user *sys_get_receive_mailbox(enclave_id_t sender_id)
 {
-  return NULL; //TODO
+  void *phys_addr = get_receive_mailbox_base_address(sender_id);
+  //TODO map phys_addr into userspace
+  return NULL; //TODO userspace pointer
 }
