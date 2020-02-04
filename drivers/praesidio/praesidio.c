@@ -1,7 +1,6 @@
 #include <linux/linkage.h>
 #include <linux/dma-mapping.h>
-#include "praesidiouser.h"
-#include "instructions.h"
+#include "praesidiodriver.h"
 #include <linux/string.h>
 #include <linux/uaccess.h>
 
