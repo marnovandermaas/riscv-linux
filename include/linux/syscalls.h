@@ -940,8 +940,5 @@ asmlinkage long sys_pkey_alloc(unsigned long flags, unsigned long init_val);
 asmlinkage long sys_pkey_free(int pkey);
 asmlinkage long sys_statx(int dfd, const char __user *path, unsigned flags,
 			  unsigned mask, struct statx __user *buffer);
-asmlinkage uint64_t sys_create_enclave(void *enclave_memory);
-asmlinkage unsigned long sys_create_send_mailbox(uint64_t receiver_id);
-asmlinkage unsigned long sys_get_receive_mailbox(uint64_t sender_id);
 
 #endif
