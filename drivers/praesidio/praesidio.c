@@ -20,26 +20,51 @@
 //Registering the fops and cdev to the device: https://embetronicx.com/tutorials/linux/device-drivers/cdev-structure-and-file-operations-of-character-drivers/
 
 #define PAGE_SHIFT (12)
+#define MAXIMUM_AMOUNT_OF_ENCLAVES (256)
 
 //Driver global variables
 static dev_t praesidio_base_devnum = 0;
 static const char praesidio_name[] = "praesidio-driver";
 static struct class *praesidio_class = NULL;
 struct cdev *praesidio_cdev = NULL;
+struct cdev *praesidio_enclave_cdev = NULL;
 
 //Driver function definitions
 ssize_t praesidio_file_read (struct file *file_ptr, char *user_buffer, size_t count, loff_t *position);
-static int praesidio_file_open (struct inode *inode, struct file *file);
+static long praesidio_file_ioctl (struct file *file_ptr, unsigned int ioctl_num, unsigned long ioctl_param);
+static long praesidio_enclave_ioctl (struct file *file_ptr, unsigned int ioctl_num, unsigned long ioctl_param);
+static int praesidio_enclave_mmap (struct file *file_ptr, struct vm_area_struct *vma);
 
 static const struct file_operations praesidio_fops = {
   .owner          = THIS_MODULE,
-  .open           = praesidio_file_open,
-  // .ioctl          = praesidio_file_ioctly,
-  // .mmap           = praesidio_file_mmap,
+  .unlocked_ioctl = praesidio_file_ioctl,
   .read           = praesidio_file_read,
 };
 
-asmlinkage enclave_id_t sys_create_enclave(void __user *enclave_memory)
+static const struct file_operations praesidio_enclave_fops = {
+  .owner          = THIS_MODULE,
+  .unlocked_ioctl = praesidio_enclave_ioctl,
+  .mmap           = praesidio_enclave_mmap,
+};
+
+enum praesidio_ioctl_state_t {
+  praesidio_ioctl_none,
+  praesidio_ioctl_create_enclave,
+  praesidio_ioctl_create_send_mailbox,
+  praesidio_ioctl_get_receive_mailbox,
+};
+
+struct praesidio_enclave_private_data_t {
+  dev_t device_number;// = 0;
+  struct cdev *cdev;// = NULL;
+  enclave_id_t enclave_identifier;// = ENCLAVE_INVALID_ID;
+  int process_identifier; //use task_pid_nr(current) to get the pid of the calling user process
+  unsigned long tx_page;// = 0;
+  unsigned long rx_page;// = 0;
+  enum praesidio_ioctl_state_t ioctl_operation;// = praesidio_ioctl_none;
+};
+
+asmlinkage enclave_id_t __create_enclave(void __user *enclave_memory)
 {
   /*
   * Allocate enclave memory
@@ -122,7 +147,7 @@ asmlinkage enclave_id_t sys_create_enclave(void __user *enclave_memory)
 
 //reference: https://linux-kernel-labs.github.io/master/labs/memory_mapping.html
 //reference: http://krishnamohanlinux.blogspot.com/2015/02/getuserpages-example.html
-asmlinkage unsigned long sys_create_send_mailbox(enclave_id_t receiver_id)
+asmlinkage unsigned long __create_send_mailbox(enclave_id_t receiver_id)
 {
   dma_addr_t phys_addr = 0;
   void *cpu_addr = NULL;
@@ -163,7 +188,7 @@ asmlinkage unsigned long sys_create_send_mailbox(enclave_id_t receiver_id)
   return ret_address;
 }
 
-asmlinkage unsigned long sys_get_receive_mailbox(enclave_id_t sender_id)
+asmlinkage unsigned long __get_receive_mailbox(enclave_id_t sender_id)
 {
   struct page *page = NULL;
   volatile void *phys_addr = get_receive_mailbox_base_address(sender_id);
@@ -189,7 +214,7 @@ asmlinkage unsigned long sys_get_receive_mailbox(enclave_id_t sender_id)
   return ret_address;
 }
 
-static const char    g_s_Hello_World_string[] = "Hello world from kernel mode!\n\0";
+static const char    g_s_Hello_World_string[] = "Praesidio enclave driver is active!\n\0";
 static const ssize_t g_s_Hello_World_size = sizeof(g_s_Hello_World_string);
 ssize_t praesidio_file_read (struct file *file_ptr, char __user *user_buffer, size_t count, loff_t *position) {
   printk( KERN_NOTICE "Simple-driver: Device file is read at offset = %i, read bytes count = %u"
@@ -206,6 +231,58 @@ ssize_t praesidio_file_read (struct file *file_ptr, char __user *user_buffer, si
   /* Move reading position */
   *position += count;
   return count;
+}
+
+#define ENCLAVE_DEVICE_NAME_MAX_CHAR (128)
+static int internal_enclave_count = 1;
+
+static long praesidio_file_ioctl (struct file *file_ptr, unsigned int ioctl_num, unsigned long ioctl_param) {
+  int result;
+  dev_t enclave_device_number = MKDEV(MAJOR(praesidio_base_devnum), internal_enclave_count);
+  char enclave_name[ENCLAVE_DEVICE_NAME_MAX_CHAR];
+  void __user *user_buffer = (void __user *) ioctl_param;
+  if(internal_enclave_count > MAXIMUM_AMOUNT_OF_ENCLAVES) {
+    printk(KERN_ERR "praesidio_file_ioctl: cannot create more than %d enclave.\n", MAXIMUM_AMOUNT_OF_ENCLAVES);
+    return -1;
+  }
+  sprintf(enclave_name, "praesidio%d", internal_enclave_count);
+  internal_enclave_count += 1;
+  if(device_create(praesidio_class, NULL, enclave_device_number, NULL, enclave_name) == NULL) {
+    printk(KERN_ERR "praesidio_file_ioctl: failed to create enclave device.\n");
+    return -2;
+  }
+  result = cdev_add(praesidio_enclave_cdev, enclave_device_number, 1);
+  if (result < 0) {
+    printk(KERN_ERR "praesidio_file_ioctl: could not apply fops to enclave device.\n");
+    return result;
+  }
+
+  printk(KERN_NOTICE "praesidio-driver: registered character device with major number %d and minor number %d on /dev/%s.\n", MAJOR(enclave_device_number), MINOR(enclave_device_number), enclave_name);
+  if(copy_to_user(user_buffer, enclave_name, strnlen(enclave_name, ENCLAVE_DEVICE_NAME_MAX_CHAR-1)+1)) {
+    printk(KERN_ERR "praesidio-driver: could not copy device name to user space.\n");
+    return -3;
+  }
+  return 0;
+}
+
+static long praesidio_enclave_ioctl (struct file *file_ptr, unsigned int ioctl_num, unsigned long ioctl_param) {
+  return 0; //TODO
+  // struct enclave_record_list_t *current_record = NULL;
+  // switch(ioctl_num) {
+  //   case praesidio_ioctl_create_enclave:
+  //     return __create_enclave((void __user *) ioctl_param);
+  //   case praesidio_ioctl_create_send_mailbox:
+  //   case praesidio_ioctl_get_receive_mailbox:
+  //     current_record = __get_enclave_record(pid, (enclave_id_t) ioctl_param);
+  //     current_record->ioctl_operation = (praesidio_ioctl_state_t) ioctl_param;
+  //     return 0;
+  //   default:
+  //     printk(KERN_ERR "praesidio-driver: unsupported ioctl %d.\n", ioctl_num);
+  //     return -((long) ioctl_num);
+  // }
+}
+static int praesidio_enclave_mmap (struct file *file_ptr, struct vm_area_struct *vma) {
+  return 0; //TODO
 }
 
 static void __exit praesidio_module_exit(void)
@@ -225,9 +302,9 @@ static void __exit praesidio_module_exit(void)
 static int __init praesidio_module_init(void)
 {
   int result;
-  result = alloc_chrdev_region(&praesidio_base_devnum, 0, 1, "praesidio_dev");
+  result = alloc_chrdev_region(&praesidio_base_devnum, 0, MAXIMUM_AMOUNT_OF_ENCLAVES, "praesidio_dev");
   if(result < 0) {
-    printk(KERN_ERR "praesidio_module_init: cannot allocate character device.\n");
+    printk(KERN_ERR "praesidio_module_init: cannot allocate %d character devices.\n", MAXIMUM_AMOUNT_OF_ENCLAVES);
     return result;
   }
   praesidio_class = class_create(THIS_MODULE, "praesidio_class");
@@ -247,17 +324,11 @@ static int __init praesidio_module_init(void)
     printk(KERN_ERR "praesidio_module_init: could not apply fops to device.\n");
     return result;
   }
-  // result = register_chrdev(0, praesidio_name, &dmabuffer_fops);
-  // if(result < 0) {
-  //   printk(KERN_ERR "praesidio_module_init: failed to register module.\n");
-  //   return result;
-  // }
-  printk(KERN_NOTICE "praesidio-driver: registered character device with major number %d and minor number %d.\n", MAJOR(praesidio_base_devnum), MINOR(praesidio_base_devnum));
-  return 0;
-}
 
-static int praesidio_file_open (struct inode *inode, struct file *file) {
-  printk(KERN_NOTICE "praesidio-driver: /dev/ file opened.\n");
+  praesidio_enclave_cdev = cdev_alloc();
+  praesidio_enclave_cdev->ops = &praesidio_enclave_fops;
+
+  printk(KERN_NOTICE "praesidio-driver: registered character device with major number %d and minor number %d.\n", MAJOR(praesidio_base_devnum), MINOR(praesidio_base_devnum));
   return 0;
 }
 
