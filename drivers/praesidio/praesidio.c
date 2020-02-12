@@ -55,8 +55,6 @@ enum praesidio_ioctl_state_t {
 };
 
 struct praesidio_enclave_private_data_t {
-  dev_t device_number;// = 0;
-  struct cdev *cdev;// = NULL;
   enclave_id_t enclave_identifier;// = ENCLAVE_INVALID_ID;
   int process_identifier; //use task_pid_nr(current) to get the pid of the calling user process
   unsigned long tx_page;// = 0;
@@ -86,14 +84,14 @@ asmlinkage enclave_id_t __create_enclave(void __user *enclave_memory)
   printk(KERN_NOTICE "sys_create_enclave: virtual address 0x%016lx and physical address 0x%016llx.\n", (unsigned long) cpu_addr, phys_addr);
   if (IS_ERR_OR_NULL(cpu_addr)) {
     printk(KERN_ERR "sys_create_enclave: dma_alloc_coherent() failed\n");
-    return -1;
+    return ENCLAVE_INVALID_ID;
   }
 
   //For reference: https://www.fsl.cs.sunysb.edu/kernel-api/re257.html
   copy_status = copy_from_user(cpu_addr, enclave_memory, NUMBER_OF_ENCLAVE_PAGES << PAGE_SHIFT); //Initialize enclave memory
   if (copy_status != 0) {
     printk(KERN_ERR "sys_create_enclave: Could not copy enclave memory from user space.\n");
-    return -2;
+    return ENCLAVE_INVALID_ID;
   }
 
   /*
@@ -266,20 +264,39 @@ static long praesidio_file_ioctl (struct file *file_ptr, unsigned int ioctl_num,
 }
 
 static long praesidio_enclave_ioctl (struct file *file_ptr, unsigned int ioctl_num, unsigned long ioctl_param) {
-  return 0; //TODO
-  // struct enclave_record_list_t *current_record = NULL;
-  // switch(ioctl_num) {
-  //   case praesidio_ioctl_create_enclave:
-  //     return __create_enclave((void __user *) ioctl_param);
-  //   case praesidio_ioctl_create_send_mailbox:
-  //   case praesidio_ioctl_get_receive_mailbox:
-  //     current_record = __get_enclave_record(pid, (enclave_id_t) ioctl_param);
-  //     current_record->ioctl_operation = (praesidio_ioctl_state_t) ioctl_param;
-  //     return 0;
-  //   default:
-  //     printk(KERN_ERR "praesidio-driver: unsupported ioctl %d.\n", ioctl_num);
-  //     return -((long) ioctl_num);
-  // }
+  struct praesidio_enclave_private_data_t *current_record = NULL;
+  enclave_id_t enclave_id = ENCLAVE_INVALID_ID;
+  printk(KERN_NOTICE "praesidio_enclave_ioctl: called ioctl with num %u and param %lu.\n", ioctl_num, ioctl_param);
+  // {
+  //   .enclave_identifier = ENCLAVE_INVALID_ID;
+  //   .process_identifier = 0; //use task_pid_nr(current) to get the pid of the calling user process
+  //   .tx_page = 0;
+  //   .rx_page = 0;
+  //   .ioctl_operation = praesidio_ioctl_none;
+  // };
+  switch(ioctl_num) {
+    case praesidio_ioctl_create_enclave:
+      if(file_ptr->private_data != NULL) {
+        printk(KERN_NOTICE "praesidio-driver: cannot create enclave because there already is one.\n");
+        return -((long) ioctl_num);
+      }
+      current_record = (struct praesidio_enclave_private_data_t *) kalloc(sizeof(struct praesidio_enclave_private_data_t), GFP_KERNEL);
+      enclave_id = __create_enclave((void __user *) ioctl_param);
+      if(enclave_id != ENCLAVE_INVALID_ID) {
+        current_record->enclave_identifier = enclave_id;
+        current_record->process_identifier = task_pid_nr(current);
+        file_ptr->private_data = current_record;
+      }
+      return (long) enclave_id;
+    case praesidio_ioctl_create_send_mailbox:
+    case praesidio_ioctl_get_receive_mailbox:
+      current_record = (struct praesidio_enclave_private_data_t *) file_ptr->private_data;
+      current_record->ioctl_operation = (praesidio_ioctl_state_t) ioctl_param;
+      return 0;
+    default:
+      printk(KERN_ERR "praesidio-driver: unsupported ioctl %d.\n", ioctl_num);
+      return -((long) ioctl_num);
+  }
 }
 static int praesidio_enclave_mmap (struct file *file_ptr, struct vm_area_struct *vma) {
   return 0; //TODO
