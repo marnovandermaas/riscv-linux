@@ -152,10 +152,11 @@ int __create_send_mailbox(struct file *file_ptr, struct vm_area_struct *vma)
   dma_addr_t phys_addr = 0;
   void *cpu_addr = NULL;
   struct page *page = NULL;
+  struct praesidio_enclave_private_data_t *enclave_data = (struct praesidio_enclave_private_data_t *) file_ptr->private_data;
   int status = 0;
   cpu_addr = dma_alloc_coherent(
       NULL,
-      1 << PAGE_SHIFT,
+      1 << PAGE_BIT_SHIFT,
       &phys_addr, GFP_KERNEL
   );
   printk(KERN_NOTICE "__create_send_mailbox: virtual address 0x%016lx and physical address 0x%016llx.\n", (unsigned long) cpu_addr, phys_addr);
@@ -164,10 +165,10 @@ int __create_send_mailbox(struct file *file_ptr, struct vm_area_struct *vma)
     return -1;
   }
 
-  // if(give_read_permission((void *) phys_addr, cpu_addr, receiver_id)) {
-  //   printk(KERN_ERR "sys_create_send_mailbox: Failed to give read permission.\n");
-  //   return 0;
-  // }
+  if(give_read_permission((void *) phys_addr, cpu_addr, enclave_data->enclave_identifier)) {
+    printk(KERN_ERR "sys_create_send_mailbox: Failed to give read permission.\n");
+    return 0;
+  }
 
   printk(KERN_NOTICE "__create_send_mailbox: translating address to page struct.\n");
   page = pfn_to_page(((phys_addr_t) phys_addr) >> PAGE_SHIFT); //pfn is physical address shifted to the right with page bit shift
@@ -182,10 +183,7 @@ int __create_send_mailbox(struct file *file_ptr, struct vm_area_struct *vma)
     return -3;
   }
 
-  //TODO remove
-  sprintf((char *) cpu_addr, "msg from kernel mode");
-
-  printk(KERN_NOTICE "__create_send_mailbox: returning now.\n");
+  //printk(KERN_NOTICE "__create_send_mailbox: returning now.\n");
   return 0;
 }
 
