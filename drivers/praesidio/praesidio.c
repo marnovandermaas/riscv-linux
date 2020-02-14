@@ -170,8 +170,8 @@ int __create_send_mailbox(struct file *file_ptr, struct vm_area_struct *vma)
     return 0;
   }
 
-  printk(KERN_NOTICE "__create_send_mailbox: translating address to page struct.\n");
-  page = pfn_to_page(((phys_addr_t) phys_addr) >> PAGE_SHIFT); //pfn is physical address shifted to the right with page bit shift
+  //printk(KERN_NOTICE "__create_send_mailbox: translating address to page struct.\n");
+  page = pfn_to_page(((phys_addr_t) phys_addr) >> PAGE_BIT_SHIFT); //pfn is physical address shifted to the right with page bit shift
   if(page == NULL) {
     printk(KERN_ERR "__create_send_mailbox: Failed to generate page struct from pfn.\n");
     return -2;
@@ -189,29 +189,30 @@ int __create_send_mailbox(struct file *file_ptr, struct vm_area_struct *vma)
 
 int __get_receive_mailbox(struct file *file_ptr, struct vm_area_struct *vma)
 {
-  return -1;
-  // struct page *page = NULL;
-  // volatile void *phys_addr = get_receive_mailbox_base_address(sender_id);
-  // unsigned long ret_address = 0;
-  //
-  // if(phys_addr == NULL) {
-  //   printk(KERN_ERR "sys_get_receive_mailbox: Failed to get mailbox address from enclave.\n");
-  //   return 0;
-  // }
-  // printk(KERN_NOTICE "sys_get_receive_mailbox: Getting receive mailbox with physicall address 0x%016lx\n", (unsigned long) phys_addr);
-  //
-  // page = pfn_to_page(((phys_addr_t) phys_addr) >> PAGE_SHIFT); //pfn is physical address shifted to the right with page bit shift
-  // if(page == NULL) {
-  //   printk(KERN_ERR "sys_get_receive_mailbox: Failed to generate page struct from pfn.\n");
-  //   return 0;
-  // }
-  // ret_address = current->mm->mmap->vm_start;
-  // if(vm_insert_page(current->mm->mmap, ret_address, page)) {
-  //   printk(KERN_ERR "sys_get_receive_mailbox: Failed to map mailbox page into user space.\n");
-  //   return 0;
-  // }
-  //
-  // return ret_address;
+  struct page *page = NULL;
+  struct praesidio_enclave_private_data_t *enclave_data = (struct praesidio_enclave_private_data_t *) file_ptr->private_data;
+  volatile void *phys_addr;
+  printk(KERN_NOTICE "__get_receive_mailbox: now getting address.\n");
+
+  phys_addr = get_receive_mailbox_base_address(enclave_data->enclave_identifier);
+
+  if(phys_addr == NULL) {
+    printk(KERN_ERR "__get_receive_mailbox: Failed to get mailbox address from enclave.\n");
+    return 0;
+  }
+  printk(KERN_NOTICE "__get_receive_mailbox: Getting receive mailbox with physicall address 0x%016lx\n", (unsigned long) phys_addr);
+
+  page = pfn_to_page(((phys_addr_t) phys_addr) >> PAGE_BIT_SHIFT); //pfn is physical address shifted to the right with page bit shift
+  if(page == NULL) {
+    printk(KERN_ERR "__get_receive_mailbox: Failed to generate page struct from pfn.\n");
+    return 0;
+  }
+  if(vm_insert_page(vma, vma->vm_start, page)) {
+    printk(KERN_ERR "__get_receive_mailbox: Failed to map mailbox page into user space.\n");
+    return 0;
+  }
+
+  return 0;
 }
 
 static const char    g_s_Hello_World_string[] = "Praesidio enclave driver is active!\n\0";
@@ -293,10 +294,13 @@ static long praesidio_enclave_ioctl (struct file *file_ptr, unsigned int cmd, un
       //TODO return enclave_id
       return 0;
     case IOCTL_CREATE_SEND_MAILBOX:
-    //case praesidio_ioctl_get_receive_mailbox:
       printk(KERN_NOTICE "praesidio-driver: setting ioctl operation to send mailbox.\n");
       current_record = (struct praesidio_enclave_private_data_t *) file_ptr->private_data;
       current_record->ioctl_operation = praesidio_ioctl_create_send_mailbox;
+      return 0;
+    case IOCTL_GET_RECEIVE_MAILBOX:
+      current_record = (struct praesidio_enclave_private_data_t *) file_ptr->private_data;
+      current_record->ioctl_operation = praesidio_ioctl_get_receive_mailbox;
       return 0;
     default:
       printk(KERN_ERR "praesidio-driver: unsupported ioctl cmd %u.\n", cmd);
