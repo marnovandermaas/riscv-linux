@@ -21,10 +21,7 @@
 //Registering the fops and cdev to the device: https://embetronicx.com/tutorials/linux/device-drivers/cdev-structure-and-file-operations-of-character-drivers/
 
 //Source: https://embetronicx.com/tutorials/linux/device-drivers/ioctl-tutorial-in-linux/
-#define IOCTL_CREATE_ENCLAVE _IO('a', 1)
-#define IOCTL_CREATE_SEND_MAILBOX _IO('a', 2)
 
-#define PAGE_SHIFT (12)
 #define MAXIMUM_AMOUNT_OF_ENCLAVES (256)
 
 //Driver global variables
@@ -83,7 +80,7 @@ asmlinkage enclave_id_t __create_enclave(void __user *enclave_memory)
   total_number_of_enclave_pages = NUMBER_OF_ENCLAVE_PAGES+NUMBER_OF_COMMUNICATION_PAGES+NUMBER_OF_STACK_PAGES;
   cpu_addr = dma_alloc_coherent(
       NULL,
-      (total_number_of_enclave_pages) << PAGE_SHIFT,
+      (total_number_of_enclave_pages) << PAGE_BIT_SHIFT,
       &phys_addr, GFP_USER
   );
   printk(KERN_NOTICE "sys_create_enclave: virtual address 0x%016lx and physical address 0x%016llx.\n", (unsigned long) cpu_addr, phys_addr);
@@ -93,7 +90,7 @@ asmlinkage enclave_id_t __create_enclave(void __user *enclave_memory)
   }
 
   //For reference: https://www.fsl.cs.sunysb.edu/kernel-api/re257.html
-  copy_status = copy_from_user(cpu_addr, enclave_memory, NUMBER_OF_ENCLAVE_PAGES << PAGE_SHIFT); //Initialize enclave memory
+  copy_status = copy_from_user(cpu_addr, enclave_memory, NUMBER_OF_ENCLAVE_PAGES << PAGE_BIT_SHIFT); //Initialize enclave memory
   if (copy_status != 0) {
     printk(KERN_ERR "sys_create_enclave: Could not copy enclave memory from user space.\n");
     return ENCLAVE_INVALID_ID;
@@ -128,7 +125,7 @@ asmlinkage enclave_id_t __create_enclave(void __user *enclave_memory)
   */
   for(i = 0; i < total_number_of_enclave_pages; i++) {
     message.type = MSG_DONATE_PAGE;
-    message.content = ((unsigned long) phys_addr) + (i << PAGE_SHIFT);
+    message.content = ((unsigned long) phys_addr) + (i << PAGE_BIT_SHIFT);
     sendMessage(&message);
     do {
       receiveMessage(&response);
@@ -281,9 +278,10 @@ static long praesidio_enclave_ioctl (struct file *file_ptr, unsigned int cmd, un
         printk(KERN_NOTICE "praesidio-driver: cannot create enclave because there already is one.\n");
         return -1;
       }
-      printk(KERN_NOTICE "praesidio-driver: requestion craete enclave.\n");
+      printk(KERN_NOTICE "praesidio-driver: requestion create enclave.\n");
       current_record = (struct praesidio_enclave_private_data_t *) kmalloc(sizeof(struct praesidio_enclave_private_data_t), GFP_KERNEL);
-      enclave_id = ENCLAVE_DEFAULT_ID;//TODO __create_enclave((void __user *) ioctl_param);
+      enclave_id = __create_enclave((void __user *) ioctl_param);
+      printk(KERN_NOTICE "praesidio-driver: created enclave %llu\n", enclave_id);
       if(enclave_id != ENCLAVE_INVALID_ID) {
         current_record->enclave_identifier = enclave_id;
         current_record->process_identifier = task_pid_nr(current);
@@ -291,6 +289,8 @@ static long praesidio_enclave_ioctl (struct file *file_ptr, unsigned int cmd, un
         current_record->rx_page = 0;
         current_record->ioctl_operation = praesidio_ioctl_none;
         file_ptr->private_data = current_record;
+      } else {
+        printk(KERN_ERR "praesidio-driver: Failed to create enclave.\n");
       }
       //TODO return enclave_id
       return 0;
