@@ -167,20 +167,20 @@ int __create_send_mailbox(struct file *file_ptr, struct vm_area_struct *vma)
 
   if(give_read_permission((void *) phys_addr, cpu_addr, enclave_data->enclave_identifier)) {
     printk(KERN_ERR "sys_create_send_mailbox: Failed to give read permission.\n");
-    return 0;
+    return -1;
   }
 
   //printk(KERN_NOTICE "__create_send_mailbox: translating address to page struct.\n");
   page = pfn_to_page(((phys_addr_t) phys_addr) >> PAGE_BIT_SHIFT); //pfn is physical address shifted to the right with page bit shift
   if(page == NULL) {
     printk(KERN_ERR "__create_send_mailbox: Failed to generate page struct from pfn.\n");
-    return -2;
+    return -1;
   }
-  printk(KERN_NOTICE "__create_send_mailbox: inserting page into virtual memory.\n");
+  //printk(KERN_NOTICE "__create_send_mailbox: inserting page into virtual memory.\n");
   status = vm_insert_page(vma, vma->vm_start, page);
   if(status) {
     printk(KERN_ERR "__create_send_mailbox: vm_insert_page failed with code %d.\n", status);
-    return -3;
+    return -1;
   }
 
   //printk(KERN_NOTICE "__create_send_mailbox: returning now.\n");
@@ -192,24 +192,31 @@ int __get_receive_mailbox(struct file *file_ptr, struct vm_area_struct *vma)
   struct page *page = NULL;
   struct praesidio_enclave_private_data_t *enclave_data = (struct praesidio_enclave_private_data_t *) file_ptr->private_data;
   volatile void *phys_addr;
+  int status = 0;
   printk(KERN_NOTICE "__get_receive_mailbox: now getting address.\n");
 
   phys_addr = get_receive_mailbox_base_address(enclave_data->enclave_identifier);
 
   if(phys_addr == NULL) {
     printk(KERN_ERR "__get_receive_mailbox: Failed to get mailbox address from enclave.\n");
-    return 0;
+    return -1;
   }
-  printk(KERN_NOTICE "__get_receive_mailbox: Getting receive mailbox with physicall address 0x%016lx\n", (unsigned long) phys_addr);
+  printk(KERN_NOTICE "__get_receive_mailbox: Getting receive mailbox with physical address 0x%016lx\n", (unsigned long) phys_addr);
 
   page = pfn_to_page(((phys_addr_t) phys_addr) >> PAGE_BIT_SHIFT); //pfn is physical address shifted to the right with page bit shift
   if(page == NULL) {
     printk(KERN_ERR "__get_receive_mailbox: Failed to generate page struct from pfn.\n");
-    return 0;
+    return -1;
   }
-  if(vm_insert_page(vma, vma->vm_start, page)) {
-    printk(KERN_ERR "__get_receive_mailbox: Failed to map mailbox page into user space.\n");
-    return 0;
+  if(!page_count(page)) {
+    printk(KERN_NOTICE "__get_receive_mailbox: overwriting page count to 1.\n");
+    set_page_count(page, 1); //TODO is this allowed?
+  }
+
+  status = vm_insert_page(vma, vma->vm_start, page);
+  if(status) {
+    printk(KERN_ERR "__get_receive_mailbox: Failed to map mailbox page into user space, with code %d\n", status);
+    return -1;
   }
 
   return 0;
