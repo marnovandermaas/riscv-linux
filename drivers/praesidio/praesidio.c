@@ -77,6 +77,7 @@ asmlinkage enclave_id_t __create_enclave(void __user *enclave_memory)
   enclave_id_t currentEnclave, myEnclave;
   void *cpu_addr = NULL;
   unsigned long copy_status;
+  int label = 100;
   total_number_of_enclave_pages = NUMBER_OF_ENCLAVE_PAGES+NUMBER_OF_COMMUNICATION_PAGES+NUMBER_OF_STACK_PAGES;
   cpu_addr = dma_alloc_coherent(
       NULL,
@@ -105,9 +106,11 @@ asmlinkage enclave_id_t __create_enclave(void __user *enclave_memory)
   message.type = MSG_CREATE_ENCLAVE;
   message.content = 0;
   sendMessage(&message);
+  OUTPUT_STATS(label);
   do {
     receiveMessage(&response);
   } while(response.source != ENCLAVE_MANAGEMENT_ID);
+  OUTPUT_STATS(label);
   myEnclave = response.content;
 
   /*
@@ -116,9 +119,11 @@ asmlinkage enclave_id_t __create_enclave(void __user *enclave_memory)
   message.type = MSG_SET_ARGUMENT;
   message.content = myEnclave;
   sendMessage(&message);
+  OUTPUT_STATS(label);
   do {
     receiveMessage(&response);
   } while(response.source != ENCLAVE_MANAGEMENT_ID);
+  OUTPUT_STATS(label);
 
   /*
   * Donate all allocated pages to enclave.
@@ -127,9 +132,11 @@ asmlinkage enclave_id_t __create_enclave(void __user *enclave_memory)
     message.type = MSG_DONATE_PAGE;
     message.content = ((unsigned long) phys_addr) + (i << PAGE_BIT_SHIFT);
     sendMessage(&message);
+    OUTPUT_STATS(label+i+1);
     do {
       receiveMessage(&response);
     } while(response.source != ENCLAVE_MANAGEMENT_ID);
+    OUTPUT_STATS(label+i+1);
   }
 
   /*
@@ -138,9 +145,11 @@ asmlinkage enclave_id_t __create_enclave(void __user *enclave_memory)
   message.type = MSG_SWITCH_ENCLAVE;
   message.content = myEnclave;
   sendMessage(&message);
+  OUTPUT_STATS(label);
   do {
     receiveMessage(&response);
   } while(response.source != ENCLAVE_MANAGEMENT_ID);
+  OUTPUT_STATS(label);
 
   return myEnclave; //Return enclave identifier to user
 }
