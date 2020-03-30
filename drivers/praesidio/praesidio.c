@@ -40,7 +40,7 @@ static int praesidio_enclave_mmap (struct file *file_ptr, struct vm_area_struct 
 static const struct file_operations praesidio_fops = {
   .owner          = THIS_MODULE,
   .unlocked_ioctl = praesidio_file_ioctl,
-  .read           = praesidio_file_read,
+  //.read           = praesidio_file_read,
 };
 
 static const struct file_operations praesidio_enclave_fops = {
@@ -84,7 +84,9 @@ asmlinkage enclave_id_t __create_enclave(void __user *enclave_memory)
       (total_number_of_enclave_pages) << PAGE_BIT_SHIFT,
       &phys_addr, GFP_USER
   );
+#ifdef PRAESIDIO_DEBUG
   printk(KERN_NOTICE "sys_create_enclave: virtual address 0x%016lx and physical address 0x%016llx.\n", (unsigned long) cpu_addr, phys_addr);
+#endif
   if (IS_ERR_OR_NULL(cpu_addr)) {
     printk(KERN_ERR "sys_create_enclave: dma_alloc_coherent() failed\n");
     return ENCLAVE_INVALID_ID;
@@ -168,7 +170,9 @@ int __create_send_mailbox(struct file *file_ptr, struct vm_area_struct *vma)
       1 << PAGE_BIT_SHIFT,
       &phys_addr, GFP_KERNEL
   );
+#ifdef PRAESIDIO_DEBUG
   printk(KERN_NOTICE "__create_send_mailbox: virtual address 0x%016lx and physical address 0x%016llx.\n", (unsigned long) cpu_addr, phys_addr);
+#endif
   if (IS_ERR_OR_NULL(cpu_addr)) {
     printk(KERN_ERR "__create_send_mailbox: dma_alloc_coherent() failed\n");
     return -1;
@@ -179,20 +183,17 @@ int __create_send_mailbox(struct file *file_ptr, struct vm_area_struct *vma)
     return -1;
   }
 
-  //printk(KERN_NOTICE "__create_send_mailbox: translating address to page struct.\n");
   page = pfn_to_page(((phys_addr_t) phys_addr) >> PAGE_BIT_SHIFT); //pfn is physical address shifted to the right with page bit shift
   if(page == NULL) {
     printk(KERN_ERR "__create_send_mailbox: Failed to generate page struct from pfn.\n");
     return -1;
   }
-  //printk(KERN_NOTICE "__create_send_mailbox: inserting page into virtual memory.\n");
   status = vm_insert_page(vma, vma->vm_start, page);
   if(status) {
     printk(KERN_ERR "__create_send_mailbox: vm_insert_page failed with code %d.\n", status);
     return -1;
   }
 
-  //printk(KERN_NOTICE "__create_send_mailbox: returning now.\n");
   return 0;
 }
 
@@ -202,7 +203,6 @@ int __get_receive_mailbox(struct file *file_ptr, struct vm_area_struct *vma)
   struct praesidio_enclave_private_data_t *enclave_data = (struct praesidio_enclave_private_data_t *) file_ptr->private_data;
   volatile void *phys_addr;
   int status = 0;
-  printk(KERN_NOTICE "__get_receive_mailbox: now getting address.\n");
 
   phys_addr = get_receive_mailbox_base_address(enclave_data->enclave_identifier);
 
@@ -210,7 +210,9 @@ int __get_receive_mailbox(struct file *file_ptr, struct vm_area_struct *vma)
     printk(KERN_ERR "__get_receive_mailbox: Failed to get mailbox address from enclave.\n");
     return -1;
   }
+#ifdef PRAESIDIO_DEBUG
   printk(KERN_NOTICE "__get_receive_mailbox: Getting receive mailbox with physical address 0x%016lx\n", (unsigned long) phys_addr);
+#endif
 
   page = pfn_to_page(((phys_addr_t) phys_addr) >> PAGE_BIT_SHIFT); //pfn is physical address shifted to the right with page bit shift
   if(page == NULL) {
@@ -218,7 +220,9 @@ int __get_receive_mailbox(struct file *file_ptr, struct vm_area_struct *vma)
     return -1;
   }
   if(!page_count(page)) {
+#ifdef PRAESIDIO_DEBUG
     printk(KERN_NOTICE "__get_receive_mailbox: overwriting page count to 1.\n");
+#endif
     set_page_count(page, 1); //TODO is this allowed?
   }
 
@@ -231,24 +235,24 @@ int __get_receive_mailbox(struct file *file_ptr, struct vm_area_struct *vma)
   return 0;
 }
 
-static const char    g_s_Hello_World_string[] = "Praesidio enclave driver is active!\n\0";
-static const ssize_t g_s_Hello_World_size = sizeof(g_s_Hello_World_string);
-ssize_t praesidio_file_read (struct file *file_ptr, char __user *user_buffer, size_t count, loff_t *position) {
-  printk( KERN_NOTICE "Simple-driver: Device file is read at offset = %i, read bytes count = %u"
-            , (int)*position
-            , (unsigned int)count );
-  /* If position is behind the end of a file we have nothing to read */
-  if( *position >= g_s_Hello_World_size )
-      return 0;
-  /* If a user tries to read more than we have, read only as many bytes as we have */
-  if( *position + count > g_s_Hello_World_size )
-      count = g_s_Hello_World_size - *position;
-  if( copy_to_user(user_buffer, g_s_Hello_World_string + *position, count) != 0 )
-      return -EFAULT;
-  /* Move reading position */
-  *position += count;
-  return count;
-}
+// static const char    g_s_Hello_World_string[] = "Praesidio enclave driver is active!\n\0";
+// static const ssize_t g_s_Hello_World_size = sizeof(g_s_Hello_World_string);
+// ssize_t praesidio_file_read (struct file *file_ptr, char __user *user_buffer, size_t count, loff_t *position) {
+//   printk( KERN_NOTICE "Simple-driver: Device file is read at offset = %i, read bytes count = %u"
+//             , (int)*position
+//             , (unsigned int)count );
+//   /* If position is behind the end of a file we have nothing to read */
+//   if( *position >= g_s_Hello_World_size )
+//       return 0;
+//   /* If a user tries to read more than we have, read only as many bytes as we have */
+//   if( *position + count > g_s_Hello_World_size )
+//       count = g_s_Hello_World_size - *position;
+//   if( copy_to_user(user_buffer, g_s_Hello_World_string + *position, count) != 0 )
+//       return -EFAULT;
+//   /* Move reading position */
+//   *position += count;
+//   return count;
+// }
 
 #define ENCLAVE_DEVICE_NAME_MAX_CHAR (128)
 static int internal_enclave_count = 1;
@@ -274,7 +278,9 @@ static long praesidio_file_ioctl (struct file *file_ptr, unsigned int ioctl_num,
     return result;
   }
 
+#ifdef PRAESIDIO_DEBUG
   printk(KERN_NOTICE "praesidio-driver: registered character device with major number %d and minor number %d on /dev/%s.\n", MAJOR(enclave_device_number), MINOR(enclave_device_number), enclave_name);
+#endif
   if(copy_to_user(user_buffer, enclave_name, strnlen(enclave_name, ENCLAVE_DEVICE_NAME_MAX_CHAR-1)+1)) {
     printk(KERN_ERR "praesidio-driver: could not copy device name to user space.\n");
     return -3;
@@ -285,18 +291,23 @@ static long praesidio_file_ioctl (struct file *file_ptr, unsigned int ioctl_num,
 static long praesidio_enclave_ioctl (struct file *file_ptr, unsigned int cmd, unsigned long ioctl_param) {
   struct praesidio_enclave_private_data_t *current_record = NULL;
   enclave_id_t enclave_id = ENCLAVE_INVALID_ID;
+#ifdef PRAESIDIO_DEBUG
   printk(KERN_NOTICE "praesidio_enclave_ioctl: called ioctl with num %u and param %lu.\n", cmd, ioctl_param);
-
+#endif
   switch(cmd) {
     case IOCTL_CREATE_ENCLAVE:
       if(file_ptr->private_data != NULL) {
         printk(KERN_NOTICE "praesidio-driver: cannot create enclave because there already is one.\n");
         return -1;
       }
+#ifdef PRAESIDIO_DEBUG
       printk(KERN_NOTICE "praesidio-driver: requestion create enclave.\n");
+#endif
       current_record = (struct praesidio_enclave_private_data_t *) kmalloc(sizeof(struct praesidio_enclave_private_data_t), GFP_KERNEL);
       enclave_id = __create_enclave((void __user *) ioctl_param);
+#ifdef PRAESIDIO_DEBUG
       printk(KERN_NOTICE "praesidio-driver: created enclave %llu\n", enclave_id);
+#endif
       if(enclave_id != ENCLAVE_INVALID_ID) {
         current_record->enclave_identifier = enclave_id;
         current_record->process_identifier = task_pid_nr(current);
@@ -310,7 +321,9 @@ static long praesidio_enclave_ioctl (struct file *file_ptr, unsigned int cmd, un
       //TODO return enclave_id
       return 0;
     case IOCTL_CREATE_SEND_MAILBOX:
+#ifdef PRAESIDIO_DEBUG
       printk(KERN_NOTICE "praesidio-driver: setting ioctl operation to send mailbox.\n");
+#endif
       current_record = (struct praesidio_enclave_private_data_t *) file_ptr->private_data;
       current_record->ioctl_operation = praesidio_ioctl_create_send_mailbox;
       return 0;
@@ -345,7 +358,9 @@ static int praesidio_enclave_mmap (struct file *file_ptr, struct vm_area_struct 
 
 static void __exit praesidio_module_exit(void)
 {
+#ifdef PRAESIDIO_DEBUG
   printk(KERN_NOTICE "praesidio-driver: exiting module.\n");
+#endif
   if(praesidio_class != NULL) {
     device_destroy(praesidio_class, praesidio_base_devnum);
     class_destroy(praesidio_class);
@@ -386,7 +401,9 @@ static int __init praesidio_module_init(void)
   praesidio_enclave_cdev = cdev_alloc();
   praesidio_enclave_cdev->ops = &praesidio_enclave_fops;
 
+#ifdef PRAESIDIO_DEBUG
   printk(KERN_NOTICE "praesidio-driver: registered character device with major number %d and minor number %d.\n", MAJOR(praesidio_base_devnum), MINOR(praesidio_base_devnum));
+#endif
   return 0;
 }
 
