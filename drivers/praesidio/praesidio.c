@@ -78,12 +78,16 @@ asmlinkage enclave_id_t __create_enclave(void __user *enclave_memory)
   void *cpu_addr = NULL;
   unsigned long copy_status;
   int label = 100;
+  int label2 = 200;
   total_number_of_enclave_pages = NUMBER_OF_ENCLAVE_PAGES+NUMBER_OF_COMMUNICATION_PAGES+NUMBER_OF_STACK_PAGES;
+  OUTPUT_STATS(label2+1);
+  OUTPUT_STATS(label2);
   cpu_addr = dma_alloc_coherent(
       NULL,
       (total_number_of_enclave_pages) << PAGE_BIT_SHIFT,
       &phys_addr, GFP_USER
   );
+  OUTPUT_STATS(label2);
 #ifdef PRAESIDIO_DEBUG
   printk(KERN_NOTICE "sys_create_enclave: virtual address 0x%016lx and physical address 0x%016llx.\n", (unsigned long) cpu_addr, phys_addr);
 #endif
@@ -92,8 +96,10 @@ asmlinkage enclave_id_t __create_enclave(void __user *enclave_memory)
     return ENCLAVE_INVALID_ID;
   }
 
+  OUTPUT_STATS(label2);
   //For reference: https://www.fsl.cs.sunysb.edu/kernel-api/re257.html
   copy_status = copy_from_user(cpu_addr, enclave_memory, NUMBER_OF_ENCLAVE_PAGES << PAGE_BIT_SHIFT); //Initialize enclave memory
+  OUTPUT_STATS(label2);
   if (copy_status != 0) {
     printk(KERN_ERR "sys_create_enclave: Could not copy enclave memory from user space.\n");
     return ENCLAVE_INVALID_ID;
@@ -153,6 +159,7 @@ asmlinkage enclave_id_t __create_enclave(void __user *enclave_memory)
   } while(response.source != ENCLAVE_MANAGEMENT_ID);
   OUTPUT_STATS(label);
 
+  OUTPUT_STATS(label2+1);
   return myEnclave; //Return enclave identifier to user
 }
 
