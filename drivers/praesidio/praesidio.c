@@ -254,25 +254,6 @@ int __get_receive_mailbox(struct file *file_ptr, struct vm_area_struct *vma)
   return 0;
 }
 
-// static const char    g_s_Hello_World_string[] = "Praesidio enclave driver is active!\n\0";
-// static const ssize_t g_s_Hello_World_size = sizeof(g_s_Hello_World_string);
-// ssize_t praesidio_file_read (struct file *file_ptr, char __user *user_buffer, size_t count, loff_t *position) {
-//   printk( KERN_NOTICE "Simple-driver: Device file is read at offset = %i, read bytes count = %u"
-//             , (int)*position
-//             , (unsigned int)count );
-//   /* If position is behind the end of a file we have nothing to read */
-//   if( *position >= g_s_Hello_World_size )
-//       return 0;
-//   /* If a user tries to read more than we have, read only as many bytes as we have */
-//   if( *position + count > g_s_Hello_World_size )
-//       count = g_s_Hello_World_size - *position;
-//   if( copy_to_user(user_buffer, g_s_Hello_World_string + *position, count) != 0 )
-//       return -EFAULT;
-//   /* Move reading position */
-//   *position += count;
-//   return count;
-// }
-
 #define ENCLAVE_DEVICE_NAME_MAX_CHAR (128)
 static int internal_enclave_count = 1;
 
