@@ -223,7 +223,7 @@ int __get_receive_mailbox(struct file *file_ptr, struct vm_area_struct *vma)
   volatile void *phys_addr;
   int status = 0;
 
-  phys_addr = get_receive_mailbox_base_address(enclave_data->enclave_identifier);
+  phys_addr = get_read_only_page(enclave_data->enclave_identifier);
 
   if(phys_addr == NULL) {
     printk(KERN_ERR "__get_receive_mailbox: Failed to get mailbox address from enclave.\n");
