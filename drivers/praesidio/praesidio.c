@@ -148,6 +148,18 @@ asmlinkage enclave_id_t __create_enclave(void __user *enclave_memory)
   }
 
   /*
+  * Finalize enclave
+  */
+  message.type = MSG_FINALIZE;
+  message.content = myEnclave;
+  sendMessage(&message);
+  OUTPUT_STATS(label);
+  do {
+    receiveMessage(&response);
+  } while(response.source != ENCLAVE_MANAGEMENT_ID);
+  OUTPUT_STATS(label);
+
+  /*
   * Run enclave
   */
   message.type = MSG_SWITCH_ENCLAVE;
