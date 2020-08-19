@@ -313,6 +313,9 @@ static long praesidio_enclave_ioctl (struct file *file_ptr, unsigned int cmd, un
 #ifdef PRAESIDIO_DEBUG
   printk(KERN_NOTICE "praesidio_enclave_ioctl: called ioctl with num %u and param %lu.\n", cmd, ioctl_param);
 #endif
+  enclave_id_t currentEnclave = ENCLAVE_INVALID_ID;
+  struct Message_t message, response;
+  struct praesidio_enclave_private_data_t *enclave_data;
   switch(cmd) {
     case IOCTL_CREATE_ENCLAVE:
       if(file_ptr->private_data != NULL) {
@@ -349,6 +352,37 @@ static long praesidio_enclave_ioctl (struct file *file_ptr, unsigned int cmd, un
     case IOCTL_GET_RECEIVE_MAILBOX:
       current_record = (struct praesidio_enclave_private_data_t *) file_ptr->private_data;
       current_record->ioctl_operation = praesidio_ioctl_get_receive_mailbox;
+      return 0;
+    case IOCTL_ATTEST_ENCLAVE:
+        currentEnclave = getCurrentEnclaveID();
+        message.source = currentEnclave;
+        message.destination = ENCLAVE_MANAGEMENT_ID;
+        message.type = MSG_SET_ARGUMENT;
+        message.content = ioctl_param >> 32; //32-bit enclave identifier encoded in most significant bits
+        sendMessage(&message);
+        do {
+          receiveMessage(&response);
+        } while(response.source != ENCLAVE_MANAGEMENT_ID);
+        message.type = MSG_ATTEST;
+        message.content = ioctl_param & 0xFFFFFFFF; //32-bit nonce encoded in least significant bits
+        sendMessage(&message);
+        do {
+          receiveMessage(&response);
+        } while(response.source != ENCLAVE_MANAGEMENT_ID);
+        //TODO return attestation result to enclave.
+        return 0;
+    case IOCTL_DELETE_ENCLAVE:
+      enclave_data = (struct praesidio_enclave_private_data_t *) file_ptr->private_data;
+      currentEnclave = getCurrentEnclaveID();
+      message.source = currentEnclave;
+      message.destination = ENCLAVE_MANAGEMENT_ID;
+      message.type = MSG_DELETE_ENCLAVE;
+      message.content = enclave_data->enclave_identifier; //identifier of enclave to be deleted
+      sendMessage(&message);
+      do {
+        receiveMessage(&response);
+      } while(response.source != ENCLAVE_MANAGEMENT_ID);
+      //TODO delete character device
       return 0;
     default:
       printk(KERN_ERR "praesidio-driver: unsupported ioctl cmd %u.\n", cmd);
