@@ -522,6 +522,7 @@ static int __init praesidio_module_init(void)
 
 #ifdef PRAESIDIO_DEBUG
   printk(KERN_NOTICE "praesidio-driver: registered character device with major number %d and minor number %d.\n", MAJOR(praesidio_base_devnum), MINOR(praesidio_base_devnum));
+  printk(KERN_NOTICE "praesidio-driver: mailboxes mapped to virtual address: 0x%016lx and read 0x%08x\n", (unsigned long) mailbox_virt_addr, ioread32(mailbox_virt_addr));
 #endif
   return 0;
 }
