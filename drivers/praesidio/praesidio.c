@@ -1,5 +1,5 @@
 #include "praesidiodriver.h"
-#include "praesidiosupervisor.h"
+#include "communication.h"
 
 #include <linux/linkage.h>
 #include <linux/dma-mapping.h>
@@ -30,6 +30,7 @@ static const char praesidio_name[] = "praesidio-driver";
 static struct class *praesidio_class = NULL;
 struct cdev *praesidio_cdev = NULL;
 struct cdev *praesidio_enclave_cdev = NULL;
+void *mailbox_virt_addr = NULL;
 
 //Driver function definitions
 ssize_t praesidio_file_read (struct file *file_ptr, char *user_buffer, size_t count, loff_t *position);
@@ -63,6 +64,83 @@ struct praesidio_enclave_private_data_t {
   unsigned long rx_page;// = 0;
   enum praesidio_ioctl_state_t ioctl_operation;// = praesidio_ioctl_none;
 };
+
+void __send_message(struct Message_t *tx_msg) {
+  size_t i = 0;
+  iowrite32(MSG_INVALID, mailbox_virt_addr);
+  for(i = 1; i < (sizeof(struct Message_t) / 4); i++) {
+    iowrite32(((int32_t *) tx_msg)[i], mailbox_virt_addr + i*4);
+  }
+  iowrite32(tx_msg->type, mailbox_virt_addr);
+#ifdef PRAESIDIO_DEBUG
+  printk(KERN_NOTICE "praesidio.c: sending type 0x%x, source 0x%x, dest 0x%x, arg %llu %llu\n", tx_msg->type, tx_msg->source, tx_msg->destination, tx_msg->arguments[0], tx_msg->arguments[1]);
+#endif
+}
+
+void __receive_message(struct Message_t *rx_msg) {
+  enclave_id_t enclave_id = getCurrentEnclaveID();
+  unsigned int number_of_mailboxes = MAILBOX_SIZE / sizeof(struct Message_t);
+  unsigned int i = 0, j= 0;
+  for(i = 0; i < number_of_mailboxes; i++) {
+    for(j = 0; j < (sizeof(struct Message_t) / 4); j++) {
+      ((int32_t *)rx_msg)[j] = ioread32(mailbox_virt_addr + i*sizeof(struct Message_t) + j*4);
+    }
+    if(rx_msg->type != MSG_INVALID && rx_msg->destination == enclave_id) {
+#ifdef PRAESIDIO_DEBUG
+      printk(KERN_NOTICE "praesidio.c: received type 0x%x, source 0x%x, dest 0x%x, arg %llu %llu\n", rx_msg->type, rx_msg->source, rx_msg->destination, rx_msg->arguments[0], rx_msg->arguments[1]);
+#endif
+      return;
+    }
+  }
+  rx_msg->type = MSG_INVALID;
+  rx_msg->source = ENCLAVE_INVALID_ID;
+  rx_msg->destination = ENCLAVE_INVALID_ID;
+}
+
+//Sets read access to a page to an enclave
+int __give_read_permission(void *phys_page_base, void *virt_page_base, enclave_id_t receiver_id) {
+  unsigned long page_number = ((unsigned long) phys_page_base - DRAM_BASE) >> PAGE_BIT_SHIFT;
+  char *byte_base;
+  struct Message_t message;
+  if ((unsigned long) phys_page_base < DRAM_BASE) { //Check if pagebase is in DRAM
+    return -1;
+  }
+  if ((((unsigned long) phys_page_base >> PAGE_BIT_SHIFT) << PAGE_BIT_SHIFT) != (unsigned long) phys_page_base) { //Check if lower bits are zero
+    return -2;
+  }
+  byte_base = (char *) virt_page_base;
+  byte_base[0] = BUSY_BYTE;
+  SET_ARGUMENT_ENCLAVE_IDENTIFIER(receiver_id);
+  asm volatile (
+    "csrrw zero, 0x40A, %0"
+    :
+    : "r"(page_number)
+    :
+  );
+  message.type = MSG_SHARE_PAGE;
+  message.source = getCurrentEnclaveID();
+  message.destination = receiver_id;
+  message.arguments[0] = page_number;
+  message.arguments[1] = 0;
+  __send_message(&message);
+  return 0;
+}
+
+//Gets base address of mailbox page from which you can receive messages from the enclave specified in sender_id.
+volatile void* __get_read_only_page(enclave_id_t sender_id) {
+  volatile void *ret_val = 0;
+  int i;
+  enclave_id_t this_id = getCurrentEnclaveID();
+  struct Message_t message;
+  do {
+    __receive_message(&message);
+    if(message.type == MSG_SHARE_PAGE && message.source == sender_id && message.destination == this_id) {
+        ret_val = (volatile void*) (message.arguments[0] << PAGE_BIT_SHIFT) + DRAM_BASE;
+    }
+    for(i=0; i<100; i++);//delay a bit before asking again.
+  } while (ret_val == 0);
+  return ret_val;
+}
 
 asmlinkage enclave_id_t __create_enclave(void __user *enclave_memory)
 {
@@ -105,73 +183,81 @@ asmlinkage enclave_id_t __create_enclave(void __user *enclave_memory)
     return ENCLAVE_INVALID_ID;
   }
 
+#ifdef PRAESIDIO_DEBUG
+  printk(KERN_NOTICE "sys_create_enclave: creating enclave.\n");
+#endif
   /*
   * Create enclave context
   */
   currentEnclave = getCurrentEnclaveID();
   message.source = currentEnclave;
   message.destination = ENCLAVE_MANAGEMENT_ID;
-  message.type = MSG_CREATE_ENCLAVE;
-  message.content = 0;
-  sendMessage(&message);
+  message.type = MSG_CREATE;
+  message.arguments[0] = 0;
+  message.arguments[1] = 0;
+  __send_message(&message);
   OUTPUT_STATS(label);
   do {
-    receiveMessage(&response);
+    __receive_message(&response);
   } while(response.source != ENCLAVE_MANAGEMENT_ID);
   OUTPUT_STATS(label);
-  myEnclave = response.content;
+  myEnclave = response.arguments[0];
 
-  /*
-  * Set enclave identifier argument for donate page message
-  */
-  message.type = MSG_SET_ARGUMENT;
-  message.content = myEnclave;
-  sendMessage(&message);
-  OUTPUT_STATS(label);
-  do {
-    receiveMessage(&response);
-  } while(response.source != ENCLAVE_MANAGEMENT_ID);
-  OUTPUT_STATS(label);
-
+#ifdef PRAESIDIO_DEBUG
+  printk(KERN_NOTICE "sys_create_enclave: donating pages.\n");
+#endif
   /*
   * Donate all allocated pages to enclave.
   */
   for(i = 0; i < total_number_of_enclave_pages; i++) {
     message.type = MSG_DONATE_PAGE;
-    message.content = ((unsigned long) phys_addr) + (i << PAGE_BIT_SHIFT);
-    sendMessage(&message);
+    message.arguments[0] = myEnclave;
+    message.arguments[1] = ((unsigned long) phys_addr) + (i << PAGE_BIT_SHIFT);
+    __send_message(&message);
     OUTPUT_STATS(label+i+1);
     do {
-      receiveMessage(&response);
+      __receive_message(&response);
     } while(response.source != ENCLAVE_MANAGEMENT_ID);
     OUTPUT_STATS(label+i+1);
   }
 
+#ifdef PRAESIDIO_DEBUG
+  printk(KERN_NOTICE "sys_create_enclave: finalizing enclave.\n");
+#endif
   /*
   * Finalize enclave
   */
   message.type = MSG_FINALIZE;
-  message.content = myEnclave;
-  sendMessage(&message);
+  message.arguments[0] = myEnclave;
+  message.arguments[1] = 0;
+  __send_message(&message);
   OUTPUT_STATS(label);
   do {
-    receiveMessage(&response);
+    __receive_message(&response);
   } while(response.source != ENCLAVE_MANAGEMENT_ID);
   OUTPUT_STATS(label);
 
+#ifdef PRAESIDIO_DEBUG
+  printk(KERN_NOTICE "sys_create_enclave: running enclave.\n");
+#endif
   /*
   * Run enclave
   */
-  message.type = MSG_SWITCH_ENCLAVE;
-  message.content = myEnclave;
-  sendMessage(&message);
+  message.type = MSG_RUN;
+  message.arguments[0] = myEnclave;
+  message.arguments[1] = 0;
+  __send_message(&message);
   OUTPUT_STATS(label);
   do {
-    receiveMessage(&response);
+    __receive_message(&response);
   } while(response.source != ENCLAVE_MANAGEMENT_ID);
   OUTPUT_STATS(label);
 
   OUTPUT_STATS(label2+1);
+
+#ifdef PRAESIDIO_DEBUG
+  printk(KERN_NOTICE "sys_create_enclave: finished and returning id %u.\n", myEnclave);
+#endif
   return myEnclave; //Return enclave identifier to user
 }
 
@@ -197,7 +283,7 @@ int __create_send_mailbox(struct file *file_ptr, struct vm_area_struct *vma)
     return -1;
   }
 
-  if(give_read_permission((void *) phys_addr, cpu_addr, enclave_data->enclave_identifier)) {
+  if(__give_read_permission((void *) phys_addr, cpu_addr, enclave_data->enclave_identifier)) {
     printk(KERN_ERR "sys_create_send_mailbox: Failed to give read permission.\n");
     return -1;
   }
@@ -223,7 +309,7 @@ int __get_receive_mailbox(struct file *file_ptr, struct vm_area_struct *vma)
   volatile void *phys_addr;
   int status = 0;
 
-  phys_addr = get_read_only_page(enclave_data->enclave_identifier);
+  phys_addr = __get_read_only_page(enclave_data->enclave_identifier);
 
   if(phys_addr == NULL) {
     printk(KERN_ERR "__get_receive_mailbox: Failed to get mailbox address from enclave.\n");
@@ -291,12 +377,12 @@ static long praesidio_file_ioctl (struct file *file_ptr, unsigned int ioctl_num,
 static long praesidio_enclave_ioctl (struct file *file_ptr, unsigned int cmd, unsigned long ioctl_param) {
   struct praesidio_enclave_private_data_t *current_record = NULL;
   enclave_id_t enclave_id = ENCLAVE_INVALID_ID;
-#ifdef PRAESIDIO_DEBUG
-  printk(KERN_NOTICE "praesidio_enclave_ioctl: called ioctl with num %u and param %lu.\n", cmd, ioctl_param);
-#endif
   enclave_id_t currentEnclave = ENCLAVE_INVALID_ID;
   struct Message_t message, response;
   struct praesidio_enclave_private_data_t *enclave_data;
+#ifdef PRAESIDIO_DEBUG
+  printk(KERN_NOTICE "praesidio_enclave_ioctl: called ioctl with num %u and param %lu.\n", cmd, ioctl_param);
+#endif
   switch(cmd) {
     case IOCTL_CREATE_ENCLAVE:
       if(file_ptr->private_data != NULL) {
@@ -309,7 +395,7 @@ static long praesidio_enclave_ioctl (struct file *file_ptr, unsigned int cmd, un
       current_record = (struct praesidio_enclave_private_data_t *) kmalloc(sizeof(struct praesidio_enclave_private_data_t), GFP_KERNEL);
       enclave_id = __create_enclave((void __user *) ioctl_param);
 #ifdef PRAESIDIO_DEBUG
-      printk(KERN_NOTICE "praesidio-driver: created enclave %llu\n", enclave_id);
+      printk(KERN_NOTICE "praesidio-driver: created enclave %u\n", enclave_id);
 #endif
       if(enclave_id != ENCLAVE_INVALID_ID) {
         current_record->enclave_identifier = enclave_id;
@@ -338,17 +424,12 @@ static long praesidio_enclave_ioctl (struct file *file_ptr, unsigned int cmd, un
         currentEnclave = getCurrentEnclaveID();
         message.source = currentEnclave;
         message.destination = ENCLAVE_MANAGEMENT_ID;
-        message.type = MSG_SET_ARGUMENT;
-        message.content = ioctl_param >> 32; //32-bit enclave identifier encoded in most significant bits
-        sendMessage(&message);
-        do {
-          receiveMessage(&response);
-        } while(response.source != ENCLAVE_MANAGEMENT_ID);
         message.type = MSG_ATTEST;
-        message.content = ioctl_param & 0xFFFFFFFF; //32-bit nonce encoded in least significant bits
-        sendMessage(&message);
+        message.arguments[0] = ioctl_param >> 32; //32-bit enclave identifier encoded in most significant bits
+        message.arguments[1] = ioctl_param & 0xFFFFFFFF; //32-bit nonce encoded in least significant bits
+        __send_message(&message);
         do {
-          receiveMessage(&response);
+          __receive_message(&response);
         } while(response.source != ENCLAVE_MANAGEMENT_ID);
         //TODO return attestation result to enclave.
         return 0;
@@ -357,11 +438,12 @@ static long praesidio_enclave_ioctl (struct file *file_ptr, unsigned int cmd, un
       currentEnclave = getCurrentEnclaveID();
       message.source = currentEnclave;
       message.destination = ENCLAVE_MANAGEMENT_ID;
-      message.type = MSG_DELETE_ENCLAVE;
-      message.content = enclave_data->enclave_identifier; //identifier of enclave to be deleted
-      sendMessage(&message);
+      message.type = MSG_DELETE;
+      message.arguments[0] = enclave_data->enclave_identifier; //identifier of enclave to be deleted
+      message.arguments[1] = 0;
+      __send_message(&message);
       do {
-        receiveMessage(&response);
+        __receive_message(&response);
       } while(response.source != ENCLAVE_MANAGEMENT_ID);
       //TODO delete character device
       return 0;
@@ -435,6 +517,8 @@ static int __init praesidio_module_init(void)
   praesidio_enclave_cdev = cdev_alloc();
   praesidio_enclave_cdev->ops = &praesidio_enclave_fops;
 
+  mailbox_virt_addr = ioremap(MAILBOX_BASE, MAILBOX_SIZE);
+
 #ifdef PRAESIDIO_DEBUG
   printk(KERN_NOTICE "praesidio-driver: registered character device with major number %d and minor number %d.\n", MAJOR(praesidio_base_devnum), MINOR(praesidio_base_devnum));
 #endif
@@ -447,4 +531,4 @@ module_exit(praesidio_module_exit);
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_AUTHOR("Marno van der Maas");
 MODULE_DESCRIPTION("Driver to interface between user land and Praesidio enclaves.");
-MODULE_VERSION("0.1");
+MODULE_VERSION("0.2");
