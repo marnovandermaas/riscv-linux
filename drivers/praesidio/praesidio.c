@@ -485,6 +485,7 @@ static void __exit praesidio_module_exit(void)
   if(praesidio_cdev != NULL) {
     cdev_del(praesidio_cdev);
   }
+  iounmap(mailbox_virt_addr);
   return;
 }
 
