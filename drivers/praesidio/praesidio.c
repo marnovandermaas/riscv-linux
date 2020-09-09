@@ -1,3 +1,6 @@
+// See COPYING file for the license details of GPLv2
+// Copyright 2020 Marno van der Maas
+
 #include "praesidiodriver.h"
 #include "communication.h"
 
