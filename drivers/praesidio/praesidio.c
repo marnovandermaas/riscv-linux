@@ -34,6 +34,7 @@ static struct class *praesidio_class = NULL;
 struct cdev *praesidio_cdev = NULL;
 struct cdev *praesidio_enclave_cdev = NULL;
 void *mailbox_virt_addr = NULL;
+void *tagdir_virt_addr = NULL;
 
 //Driver function definitions
 ssize_t praesidio_file_read (struct file *file_ptr, char *user_buffer, size_t count, loff_t *position);
@@ -113,13 +114,18 @@ int __give_read_permission(void *phys_page_base, void *virt_page_base, enclave_i
   }
   byte_base = (char *) virt_page_base;
   byte_base[0] = BUSY_BYTE;
-  SET_ARGUMENT_ENCLAVE_IDENTIFIER(receiver_id);
-  asm volatile (
-    "csrrw zero, 0x40A, %0"
-    :
-    : "r"(page_number)
-    :
-  );
+  // SET_ARGUMENT_ENCLAVE_IDENTIFIER(receiver_id);
+  // asm volatile (
+  //   "csrrw zero, 0x40A, %0"
+  //   :
+  //   : "r"(page_number)
+  //   :
+  // );
+  iowrite32(receiver_id, tagdir_virt_addr + (page_number*sizeof(struct page_tag_t)) + offsetof(struct page_tag_t, reader));
+  // volatile struct page_tag_t *page_tag = (volatile struct page_tag_t *) (TAGDIRECTORY_BASE + (page_number*sizeof(struct page_tag_t)));
+  // page_tag->reader = receiver_id;
+  // iowrite32(MSG_INVALID, mailbox_virt_addr);
+
   message.type = MSG_SHARE_PAGE;
   message.source = getCurrentEnclaveID();
   message.destination = receiver_id;
@@ -489,6 +495,7 @@ static void __exit praesidio_module_exit(void)
     cdev_del(praesidio_cdev);
   }
   iounmap(mailbox_virt_addr);
+  iounmap(tagdir_virt_addr);
   return;
 }
 
@@ -522,6 +529,7 @@ static int __init praesidio_module_init(void)
   praesidio_enclave_cdev->ops = &praesidio_enclave_fops;
 
   mailbox_virt_addr = ioremap(MAILBOX_BASE, MAILBOX_SIZE);
+  tagdir_virt_addr = ioremap(TAGDIRECTORY_BASE, TAGDIRECTORY_SIZE);
 
 #ifdef PRAESIDIO_DEBUG
   printk(KERN_NOTICE "praesidio-driver: registered character device with major number %d and minor number %d.\n", MAJOR(praesidio_base_devnum), MINOR(praesidio_base_devnum));
