@@ -23,6 +23,9 @@
 //How to get the above example to appear in /dev/: https://embetronicx.com/tutorials/linux/device-drivers/device-file-creation-for-character-drivers/
 //Registering the fops and cdev to the device: https://embetronicx.com/tutorials/linux/device-drivers/cdev-structure-and-file-operations-of-character-drivers/
 
+//TODO use cma_alloc instead of dma_alloc_coherent. This function can be used to enforce alignment so that RISC-V SV39 & SV48 2 MiB megapages can be used.
+//Doc: https://lwn.net/Articles/396707/
+
 //Source: https://embetronicx.com/tutorials/linux/device-drivers/ioctl-tutorial-in-linux/
 
 #define MAXIMUM_AMOUNT_OF_ENCLAVES (256)
